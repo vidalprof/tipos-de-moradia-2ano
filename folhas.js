@@ -591,6 +591,19 @@ function f09(d, pi){
     chips[MAT[m].n] = {el: ch, id: id, m: m};
     if(ST.resp[id] && postas[MAT[m].n])
       postas[MAT[m].n].forEach(function(k){ cels[k].className = "dcel achada"; });
+    /* ⚠️ AS DUAS PONTAS SE DECLARAM (`cp-<id>-a` na primeira letra, `cp-<id>-z`
+       na última) para o JOGADOR DA BANCA poder resolver esta folha. Sem elas ele
+       dizia "não sei jogar esta peça" e saía como dívida — e foi exatamente por
+       isso que o beco sem saída desta folha ficou no ar até o Marcos tropeçar
+       nele na sala. Folha que o jogador não alcança é folha que ninguém mede.
+       Só se a célula ainda não tiver dono: duas palavras podem cruzar numa
+       ponta, e sobrescrever faria o jogador acusar de defeito uma folha boa. */
+    var pp = postas[MAT[m].n];
+    if(pp && pp.length){
+      var ca = cels[pp[0]], cz = cels[pp[pp.length - 1]];
+      if(ca && !ca.getAttribute("data-qa")) ca.setAttribute("data-qa", "cp-" + id + "-a");
+      if(cz && !cz.getAttribute("data-qa")) cz.setAttribute("data-qa", "cp-" + id + "-z");
+    }
     lista.appendChild(ch);
   });
   d.appendChild(lista); d.appendChild(dia);
@@ -612,8 +625,41 @@ function f09(d, pi){
     ch.el.className = "pmat achada";
     acertou(ch.id, "certo" + pi + "_" + ch.m);
   }
+  /* ⚠️⚠️ AS DUAS PORTAS ESTAVAM QUEBRADAS — E O MARCOS PEGOU NA SALA
+     (15/set/2026): *"a atividade do diagrama, a número 9 não funciona"*. Eu já
+     tinha MEDIDO este mesmo defeito no `_ort5b` no dia anterior e avisado que o
+     código gêmeo estava aqui e no `_jogo1`; ficou esperando decisão, e quem
+     pagou a espera foi a criança. Lição: código gêmeo com defeito medido se
+     conserta na mesma rodada, nos três lugares.
+     O que estava errado: o `pointerdown` zerava o começo do traço em TODA letra
+     tocada. Com isso:
+       · o toque-toque (primeira letra, última letra) nunca fechava — o segundo
+         toque virava um novo começo;
+       · o arrastar também não, porque quem fechava era o `onclick`, e num
+         arrasto de A até Z o clique não cai em Z.
+     Ou seja: a folha inteira era um beco sem saída.
+     O conserto: o toque só COMEÇA se não houver começo, e o arrasto FECHA no
+     `pointerup`, na letra em que o dedo parou. */
+  var puloClique = false;
+  function celDoPonto(ev){
+    var e = document.elementFromPoint(ev.clientX, ev.clientY);
+    while(e && e !== document.body){
+      if(e._i !== undefined && e._i !== null) return e;
+      e = e.parentNode;
+    }
+    return null;
+  }
+  function fecha(ate){
+    conclui(caminho(indo, ate));
+    indo = null; puloClique = true;
+    setTimeout(function(){ puloClique = false; }, 80);
+  }
   cels.forEach(function(c){
-    c.addEventListener("pointerdown", function(ev){ ev.preventDefault(); indo = c._i; limpa(); c.className = "dcel tracando"; });
+    c.addEventListener("pointerdown", function(ev){
+      ev.preventDefault();
+      if(indo !== null && indo !== c._i) return;   /* já há começo: este toque FECHA */
+      indo = c._i; limpa(); c.className = "dcel tracando";
+    });
     c.addEventListener("pointerenter", function(){
       if(indo === null) return;
       var cam = caminho(indo, c._i);
@@ -624,12 +670,17 @@ function f09(d, pi){
        preso no primeiro alvo). Por isso o toque também fecha por TOQUE-TOQUE:
        primeira letra, última letra. Duas portas, sempre. */
     c.onclick = function(){
+      if(puloClique) return;
       if(indo === null || indo === c._i){ indo = c._i; limpa(); c.className = "dcel tracando"; return; }
-      var cam = caminho(indo, c._i);
-      conclui(cam); indo = null;
+      fecha(c._i);
     };
   });
-  document.addEventListener("pointerup", function(){ if(indo !== null) limpa(); });
+  document.addEventListener("pointerup", function(ev){
+    if(indo === null) return;
+    var c = celDoPonto(ev);
+    if(c && c._i !== indo && caminho(indo, c._i)){ fecha(c._i); return; }
+    limpa();
+  });
 }
 
 /* ============ 10 — POR QUE É FEITA DESSE MATERIAL? ============
@@ -930,12 +981,90 @@ function f16(d, pi){
 }
 /* o teclado da cruzadinha: uma palavra por vez, letra a letra */
 var CRUZ = null;
+/* ---------- ROLAR A PALAVRA PARA CIMA DO TECLADO ----------
+   ⚠️⚠️ O TECLADO TAPAVA A ATIVIDADE, e o Marcos viu no celular (15/set/2026):
+      *"ele preenche a tela e não dá para ver a atividade"*. Medido: na
+      cruzadinha de 360x640 o teclado ocupava 368 px de 640 e a grade ficava
+      INTEIRA por baixo dele — a criança escrevia às cegas.
+   ⚠️ E A REGRA TEM DOIS DEGRAUS, porque medir só um não bastou:
+      1. se a PALAVRA inteira cabe na faixa que sobra, ela sobe inteira;
+      2. se não cabe (palavra em pé, tela de 320x568 — medido), sobe a CASINHA
+         QUE ESTÁ SENDO ESCRITA, centrada na faixa. É o que um campo de texto
+         faz: mantém à vista a letra que a pessoa está digitando.
+   Por isso ela é chamada duas vezes: ao abrir o teclado e a cada letra.
+   ⚠️⚠️ E ELA ATENDE OS DOIS TECLADOS DA CASA, o que é a lição paga aqui
+      (15/set/2026): há dois desenhos de teclado nos cadernos de folha viva —
+      o da CRUZADINHA, que escreve numa fila de casinhas (`CRUZ.E.cels`), e o
+      da SÍLABA/PALAVRA, que escreve numa quadra só (`ATIVA.q`). Eu escrevi
+      esta função ancorada no primeiro e a enfiei nos dezoito cadernos pelo
+      `function abreCruz(` — que só existe em TRÊS. Nos outros quinze ficou a
+      CHAMADA sem a função: `setTimeout(rolaParaCruz, 60)` estourava
+      ReferenceError e matava o resto de `ativa()`, que era justamente quem
+      escrevia a dica e falava com a criança. O teclado abria mudo.
+      O `node --check` não vê isso (a sintaxe está perfeita); quem vê é o
+      `_qa/funcoes.py`, o portão "função que não existe" — que eu não rodei. */
+function rolaParaCruz(){
+  /* de quem é a vez: a fila da cruzadinha, ou a quadra única do outro teclado */
+  /* ⚠️⚠️ LÊ AS DUAS PELO `window`, e isto NÃO é preciosismo: escrito como
+     `typeof CRUZ !== "undefined" && CRUZ && CRUZ.E`, o `CRUZ` nu depois do `&&`
+     é acusado de `'CRUZ' is not defined` pelo ESLint nos cadernos que não têm
+     cruzadinha (ele não faz análise de fluxo, e o `typeof` só protege a
+     primeira ocorrência). E esse ESLint é o portão 0a2 que roda DENTRO do
+     `entregar.yml`, antes de publicar: com ele vermelho, NADA sobe. Foi assim
+     que quatro publicações minhas falharam seguidas hoje, sem eu entender por
+     quê — e o pré-voo daqui não pega, porque o ESLint não está instalado no
+     container. Como `CRUZ` e `ATIVA` são `var` globais, elas são propriedades
+     de `window`, e ler por ali funciona igual e é declarado. */
+  var cs = [], i, andando = 0;
+  var _cruz = window.CRUZ, _ativa = window.ATIVA;
+  if(_cruz && _cruz.E && _cruz.E.cels){
+    for(i = 0; i < _cruz.E.cels.length; i++)
+      if(_cruz.E.cels[i] && _cruz.E.cels[i].getBoundingClientRect) cs.push(_cruz.E.cels[i]);
+    andando = _cruz.val ? _cruz.val.length : 0;
+  } else if(_ativa && _ativa.q && _ativa.q.getBoundingClientRect){
+    cs.push(_ativa.q);
+  }
+  if(!cs.length) return;
+  var tkel = document.getElementById("teclado");
+  if(!tkel || tkel.className.indexOf("aberto") < 0) return;
+  var tk = tkel.getBoundingClientRect(), topo = 56, pe = tk.top - 10;
+  /* ⚠️ A RESERVA DE ROLAGEM SAI DA ALTURA REAL DO TECLADO, e não de um
+     número fixo. Ela nasceu como `padding-bottom:460px` no `comtec`, que
+     é certo para o teclado de LETRAS (336 px medidos a 360x640, 41
+     teclas) e exagerado para o de NÚMEROS (160 px, 12 teclas): sobravam
+     300 px de vazio para a criança rolar à toa enquanto digita. Como o
+     `comtec` sai da tag `body` ao fechar, a variável pode ficar guardada
+     sem fazer mal nenhum. */
+  document.documentElement.style.setProperty("--tech", Math.ceil(tk.height + 40) + "px");
+  if(pe <= topo) return;
+  var cima = 1e9, baixo = -1e9;
+  for(i = 0; i < cs.length; i++){
+    var r = cs[i].getBoundingClientRect();
+    if(r.top < cima) cima = r.top;
+    if(r.bottom > baixo) baixo = r.bottom;
+  }
+  var d = 0;
+  if(baixo - cima <= pe - topo){
+    if(baixo > pe) d = baixo - pe;
+    if(cima - d < topo) d = cima - topo;
+  } else {
+    var at = cs[Math.min(andando, cs.length - 1)].getBoundingClientRect();
+    d = at.top - (topo + (pe - topo) / 2 - at.height / 2);
+  }
+  if(Math.abs(d) > 2) window.scrollBy(0, d);
+}
 function abreCruz(E, pi){
   if(CRUZ) fechaCruz();
   CRUZ = {E: E, val: "", pi: pi};
   E.bt.className = "pista ativa";
   pintaCruz();
   document.getElementById("teclado").className = "aberto";
+  /* ⚠️ ROLAR A PALAVRA PARA CIMA DO TECLADO. Sem isto a criança escreve às
+     cegas: o teclado é fixo no pé da tela e a grade fica embaixo dele (medido
+     em 360x640: a grade inteira por baixo). O `comtec` dá chão para a página
+     poder rolar; o resto é levar a primeira casinha para a faixa que sobra. */
+  document.body.className = (document.body.className.replace(/ ?comtec/, "") + " comtec").replace(/^ /, "");
+  setTimeout(rolaParaCruz, 60);
   document.getElementById("tkDica").textContent = "Escreva a palavra da pista " + E.n;
   falar("escreva");
 }
@@ -947,6 +1076,7 @@ function fechaCruz(){
     E.bt.className = "pista";
   }
   CRUZ = null; document.getElementById("teclado").className = "";
+  document.body.className = document.body.className.replace(/ ?comtec/, "");
 }
 function pintaCruz(){
   var E = CRUZ.E, v = CRUZ.val;
@@ -965,13 +1095,32 @@ function digitaCruz(ch){
   if(ch === "ap") CRUZ.val = CRUZ.val.slice(0, -1);
   else if(ch === "ok"){ confereCruz(); return; }
   else { if(CRUZ.val.length >= E.w.length) return; CRUZ.val += ch; }
-  pintaCruz();
+  pintaCruz(); rolaParaCruz();
   if(CRUZ.val.length >= E.w.length) setTimeout(confereCruz, 380);
+}
+/* ---------- COM OU SEM ACENTO, AS DUAS VALEM ----------
+   ⚠️ PEDIDO DO MARCOS (15/set/2026): *"na cruzadinha da atividade rua do mundo
+      pode aceitar tanto com acento como sem, corrija"*. E ele está certo pelo
+      conteúdo: esta é uma cruzadinha de GEOGRAFIA — o que está sendo medido é
+      se a criança sabe que a casa sobre estacas se chama PALAFITA, não se ela
+      acerta o acento. Um Ó recusado num caderno de moradia reprova a criança
+      por uma coisa que a folha não ensina nem pergunta.
+   ⚠️ E POR ISSO ISTO NÃO É REGRA DA CASA, é regra DESTE caderno: nos cadernos
+      de ORTOGRAFIA (`_ort5`, `_ort5b`) o acento e o cedilha SÃO a matéria —
+      aceitar CACA por CAÇA lá seria jogar a atividade inteira fora. Se um dia
+      isto virar peça do motor, vem com uma chave por caderno, nunca ligada
+      para todos.
+   ⚠️ A GRADE CONTINUA MOSTRANDO A FORMA CERTA no acerto (`E.w`, com acento):
+      aceitar sem acento é não castigar, não é ensinar errado. */
+function semAcento(s){
+  return String(s)
+    .replace(/[ÁÀÂÃÄ]/g, "A").replace(/[ÉÈÊË]/g, "E").replace(/[ÍÌÎÏ]/g, "I")
+    .replace(/[ÓÒÔÕÖ]/g, "O").replace(/[ÚÙÛÜ]/g, "U").replace(/Ç/g, "C");
 }
 function confereCruz(){
   if(!CRUZ || !CRUZ.val) return;
   var E = CRUZ.E, pi = CRUZ.pi;
-  if(CRUZ.val === E.w){
+  if(semAcento(CRUZ.val) === semAcento(E.w)){
     E.cels.forEach(function(c, i){
       if(!c) return;
       var n = c.querySelector(".cn");
@@ -980,6 +1129,7 @@ function confereCruz(){
     });
     E.bt.className = "pista feita";
     CRUZ = null; document.getElementById("teclado").className = "";
+  document.body.className = document.body.className.replace(/ ?comtec/, "");
     acertou(E.id, "certo" + pi + "_" + E.k);
   } else {
     CRUZ.val = ""; pintaCruz();
@@ -1717,6 +1867,29 @@ function atualizaNav(){
    ⚠️ E o boletim conta só o que ela TENTOU. Folha que ela não chegou a abrir
       aparece como "ainda não" — jamais como 0 de 6. */
 function fim(){
+  /* ⭐⭐ AVISA O CONTROLE DA SALA QUE ESTA CRIANÇA TERMINOU.
+     Pedido do Marcos (15/set/2026): *"preciso que essas atividades sequências
+     didáticas me avisem quando termino no painel de atividades, aquele que tem
+     o controle da sala, assim como as atividades que fazíamos antes"*.
+
+     ⚠️ E ELAS NÃO AVISAVAM POR CAMINHO NENHUM — conferido no código do
+     laboratório antes de escrever isto. A tela do aluno (`_lab/index.html`)
+     reconhece o fim de DOIS jeitos, e a folha viva escapava dos dois:
+       1. A ESPIADA — ela olha dentro do quadro e procura a MEDALHA do fim pela
+          CLASSE `.medal`. A folha viva chama a dela de `#medalha`, por id, e
+          portanto a espiada nunca a via;
+       2. O AVISO — o motor manda `postMessage({eduverse:"terminou"})` ao chegar
+          no fim. A folha viva não mandava nada, porque nasceu sem essa peça.
+     Agora ela manda o aviso aqui, e a medalha ganhou também a classe `medal`
+     no HTML: dois caminhos, um cobrindo o buraco do outro, que é a razão pela
+     qual o laboratório tem os dois.
+
+     ⚠️ FORA DO LABORATÓRIO NÃO HÁ PAI NENHUM ESCUTANDO e a linha não faz nada —
+     por isso ela é segura em qualquer lugar (em casa, no celular, aberta
+     direto pelo link). O `try` existe para o caso de a janela de cima ser de
+     outro domínio, quando o navegador recusa a leitura de `window.parent`. */
+  try{ if(window.parent && window.parent !== window)
+         window.parent.postMessage({eduverse: "terminou"}, "*"); }catch(e){}
   calar();
   var abertas = 0, naoAbertas = [], pp;
   for(pp = 1; pp <= NOMES.length; pp++){
